@@ -3,7 +3,10 @@
 use std::collections::{HashMap, hash_map::Entry};
 use std::sync::Arc;
 
-use axum::{Router, routing::post};
+use axum::{
+    Router,
+    routing::{get, post},
+};
 
 use crate::api::openai;
 use crate::config::Config;
@@ -35,6 +38,7 @@ pub fn router(config: Config) -> Result<Router, UpstreamError> {
 
     let state = Arc::new(AppState { config, upstreams });
     Ok(Router::new()
+        .route("/v1/models", get(openai::models))
         .route("/v1/responses", post(openai::responses))
         .with_state(state))
 }

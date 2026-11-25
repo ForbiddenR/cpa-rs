@@ -1,4 +1,4 @@
-//! Integration tests for the native Responses endpoint.
+//! Integration tests for the OpenAI endpoints.
 
 use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
@@ -8,6 +8,7 @@ use axum::body::{Body, Bytes};
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::post;
 use axum::{Json, Router};
+use cpa_rs::routing::resolve_codex;
 use cpa_rs::{app, config::Config};
 use futures_util::{StreamExt, stream};
 use serde_json::{Value, json};
@@ -15,6 +16,84 @@ use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 
 const TIMEOUT: Duration = Duration::from_secs(5);
+
+#[tokio::test]
+async fn models_requires_client_auth_and_lists_only_routable_model_ids() {
+    let config = Config::from_yaml(
+        r#"
+access:
+  api-keys: [client-key]
+api-keys:
+  codex:
+    - models: [{alias: no-credentials}]
+      keys: []
+    - base-url: http://unused.invalid/v1
+      models: [{alias: overridden}]
+      keys: [{api-key: upstream-key, proxy-url: direct, models: []}]
+    - base-url: http://unused.invalid/v1
+      models:
+        - {name: shared-model, alias: shared}
+        - {name: ' inherited '}
+      keys:
+        - api-key: upstream-key
+          proxy-url: direct
+          models:
+            - {name: private-name, alias: ' shared '}
+            - {alias: alias-only}
+        - proxy-url: direct
+        - proxy-url: direct
+  openai-compatibility:
+    - base-url: http://unused.invalid/v1
+      models: [{alias: chat-only}]
+      keys: [{api-key: upstream-key}]
+"#,
+    )
+    .unwrap();
+    let base_url = serve(app::router(config.clone()).unwrap()).await;
+    let url = format!("{base_url}/v1/models");
+    let client = client();
+
+    let rejected = client.get(&url).send().await.unwrap();
+    assert_eq!(rejected.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(rejected.headers()["www-authenticate"], "Bearer");
+
+    let response = client
+        .get(&url)
+        .bearer_auth("client-key")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["content-type"], "application/json");
+    let payload: Value = serde_json::from_str(&response.text().await.unwrap()).unwrap();
+    assert_eq!(payload["object"], "list");
+    let models = payload["data"].as_array().unwrap();
+    let ids: Vec<_> = models
+        .iter()
+        .map(|model| model["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["shared", "alias-only", "inherited"]);
+    assert_eq!(
+        models[0],
+        json!({"id": "shared", "object": "model", "created": 0, "owned_by": "cpa-rs"})
+    );
+    for id in ids {
+        assert!(resolve_codex(&config, id).is_ok(), "unroutable model {id}");
+    }
+}
+
+#[tokio::test]
+async fn models_returns_an_empty_list_without_routes() {
+    let base_url = serve(app::router(Config::default()).unwrap()).await;
+    let response = client()
+        .get(format!("{base_url}/v1/models"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload: Value = serde_json::from_str(&response.text().await.unwrap()).unwrap();
+    assert_eq!(payload, json!({"object": "list", "data": []}));
+}
 
 #[tokio::test]
 async fn responses_authenticates_rewrites_model_and_streams_incrementally() {

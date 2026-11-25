@@ -9,42 +9,55 @@ use axum::extract::{Request, State};
 use axum::http::header::{CONNECTION, HeaderName, HeaderValue, WWW_AUTHENTICATE};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use serde_json::{json, value::RawValue};
+use serde_json::{Value, json, value::RawValue};
 
 use super::auth::allows_bearer;
 use crate::app::AppState;
 use crate::proxy::upstream::UpstreamEndpoint;
-use crate::routing::{RouteError, resolve_codex};
+use crate::routing::{RouteError, list_codex_models, resolve_codex};
+
+pub(crate) async fn models(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, OpenAiError> {
+    if !allows_bearer(&state.config.access, &headers) {
+        return Err(OpenAiError::Unauthorized);
+    }
+
+    let data: Vec<_> = list_codex_models(&state.config)
+        .into_iter()
+        .map(|id| json!({"id": id, "object": "model", "created": 0, "owned_by": "cpa-rs"}))
+        .collect();
+    Ok(Json(json!({"object": "list", "data": data})))
+}
 
 pub(crate) async fn responses(
     State(state): State<Arc<AppState>>,
     request: Request,
-) -> Result<Response, ResponsesError> {
+) -> Result<Response, OpenAiError> {
     if !allows_bearer(&state.config.access, request.headers()) {
-        return Err(ResponsesError::Unauthorized);
+        return Err(OpenAiError::Unauthorized);
     }
 
     let (route, stream, body) = {
         let input = to_bytes(request.into_body(), usize::MAX)
             .await
-            .map_err(|_| ResponsesError::InvalidBody("Could not read the request body"))?;
+            .map_err(|_| OpenAiError::InvalidBody("Could not read the request body"))?;
         // Keep the JSON values of all fields other than model intact.
-        let mut payload: BTreeMap<String, &RawValue> =
-            serde_json::from_slice(&input).map_err(|_| {
-                ResponsesError::InvalidBody("Expected a JSON object in the request body")
-            })?;
+        let mut payload: BTreeMap<String, &RawValue> = serde_json::from_slice(&input)
+            .map_err(|_| OpenAiError::InvalidBody("Expected a JSON object in the request body"))?;
         let model: String = payload
             .get("model")
             .and_then(|value| serde_json::from_str(value.get()).ok())
-            .ok_or(ResponsesError::InvalidModel)?;
-        let route = resolve_codex(&state.config, &model).map_err(ResponsesError::Route)?;
+            .ok_or(OpenAiError::InvalidModel)?;
+        let route = resolve_codex(&state.config, &model).map_err(OpenAiError::Route)?;
         let stream = payload
             .get("stream")
             .is_some_and(|value| value.get() == "true");
         let model = serde_json::value::to_raw_value(route.upstream_model)
-            .map_err(|_| ResponsesError::Encode)?;
+            .map_err(|_| OpenAiError::Encode)?;
         payload.insert("model".to_owned(), &model);
-        let body = serde_json::to_vec(&payload).map_err(|_| ResponsesError::Encode)?;
+        let body = serde_json::to_vec(&payload).map_err(|_| OpenAiError::Encode)?;
         (route, stream, body)
     };
 
@@ -58,7 +71,7 @@ pub(crate) async fn responses(
             stream,
         )
         .await
-        .map_err(|_| ResponsesError::Upstream)?;
+        .map_err(|_| OpenAiError::Upstream)?;
     let status = upstream.status();
     let mut headers = std::mem::take(upstream.headers_mut());
     strip_hop_by_hop_headers(&mut headers);
@@ -94,7 +107,7 @@ fn strip_hop_by_hop_headers(headers: &mut HeaderMap) {
     }
 }
 
-pub(crate) enum ResponsesError {
+pub(crate) enum OpenAiError {
     Unauthorized,
     InvalidBody(&'static str),
     InvalidModel,
@@ -103,7 +116,7 @@ pub(crate) enum ResponsesError {
     Upstream,
 }
 
-impl IntoResponse for ResponsesError {
+impl IntoResponse for OpenAiError {
     fn into_response(self) -> Response {
         let (status, kind, message) = match self {
             Self::Unauthorized => (
