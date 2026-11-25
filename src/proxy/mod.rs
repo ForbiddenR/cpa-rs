@@ -1,4 +1,4 @@
 //! Coordinates routing, protocol translation, and upstream execution.
 
 mod sse;
-mod upstream;
+pub mod upstream;

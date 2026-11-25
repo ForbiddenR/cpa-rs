@@ -54,12 +54,7 @@ fn validate_base_url(value: &str, path: &str, active: bool) -> Result<(), Config
         return Ok(());
     }
 
-    let valid = parse_endpoint(value).is_some_and(|url| {
-        matches!(url.scheme(), "http" | "https")
-            && url.query().is_none()
-            && url.fragment().is_none()
-    });
-    if !valid {
+    if parse_base_url(value).is_none() {
         return Err(invalid_field(
             format!("{path}.base-url"),
             "expected an HTTP or HTTPS URL with a host and no query or fragment",
@@ -77,15 +72,26 @@ fn validate_proxy_url(value: Option<&str>, path: &str) -> Result<(), ConfigError
         return Ok(());
     }
 
-    if !parse_endpoint(value)
-        .is_some_and(|url| matches!(url.scheme(), "http" | "https" | "socks5" | "socks5h"))
-    {
+    if parse_proxy_url(value).is_none() {
         return Err(invalid_field(
             format!("{path}.proxy-url"),
             "expected an HTTP, HTTPS, SOCKS5, or SOCKS5H URL, direct, or none",
         ));
     }
     Ok(())
+}
+
+pub(crate) fn parse_base_url(value: &str) -> Option<Url> {
+    parse_endpoint(value).filter(|url| {
+        matches!(url.scheme(), "http" | "https")
+            && url.query().is_none()
+            && url.fragment().is_none()
+    })
+}
+
+pub(crate) fn parse_proxy_url(value: &str) -> Option<Url> {
+    parse_endpoint(value)
+        .filter(|url| matches!(url.scheme(), "http" | "https" | "socks5" | "socks5h"))
 }
 
 fn parse_endpoint(value: &str) -> Option<Url> {

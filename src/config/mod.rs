@@ -7,6 +7,7 @@ mod store;
 mod validation;
 
 pub use store::ConfigError;
+pub(crate) use validation::{parse_base_url, parse_proxy_url};
 
 const CONFIG_VERSION: u32 = 8;
 
