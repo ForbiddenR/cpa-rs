@@ -1,15 +1,41 @@
+# Copy this file to config.yaml and set the keys for your deployment.
 config-version: 8
 
 server:
   host: "127.0.0.1"
   port: 8317
+  # An empty value lets the server generate and persist a deployment UUID.
+  server-id: ""
 
 management:
   allow-remote: false
+  # Set the key used to sign in to the management panel.
   secret-key: ""
+  disable-control-panel: false
 
 access:
-  api-keys: []
+  # Inference clients such as Codex use a key from this list.
+  api-keys: [] # For example ["replace-with-client-key"]
 
 api-keys:
-  openai-compatibility: []
+  # Models in this group use the upstream /responses endpoint.
+  codex:
+    - name: "openai-responses"
+      base-url: "https://api.openai.com/v1"
+      models:
+        - name: "replace-with-responses-model"
+          alias: "codex-test"
+      # Set the model name and replace the empty list before using this group.
+      keys: [] # For example [{api-key: "replace-with-openai-api-key"}]
+
+  # Models in this group use the upstream /chat/completions endpoint.
+  openai-compatibility:
+    - name: "openai-compatible-chat"
+      # Set the API key and model name, then enable this group.
+      disabled: true
+      base-url: "https://gateway.example.com/v1"
+      keys:
+        - api-key: "replace-with-upstream-api-key"
+      models:
+        - name: "replace-with-chat-model"
+          alias: "codex-via-chat"

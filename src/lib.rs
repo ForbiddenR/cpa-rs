@@ -2,7 +2,7 @@
 
 mod api;
 pub mod app;
-mod config;
+pub mod config;
 mod proxy;
 mod routing;
 mod translate;
