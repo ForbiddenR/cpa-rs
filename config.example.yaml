@@ -1,0 +1,15 @@
+config-version: 8
+
+server:
+  host: "127.0.0.1"
+  port: 8317
+
+management:
+  allow-remote: false
+  secret-key: ""
+
+access:
+  api-keys: []
+
+api-keys:
+  openai-compatibility: []
