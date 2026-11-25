@@ -4,5 +4,5 @@ mod api;
 pub mod app;
 pub mod config;
 pub mod proxy;
-mod routing;
+pub mod routing;
 mod translate;
